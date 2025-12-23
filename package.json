@@ -4,7 +4,7 @@
 	"version": "0.0.1",
 	"type": "module",
 	"bin": {
-		"preview": "./preview.mjs"
+		"preview": "preview.mjs"
 	},
 	"engines": {
 		"node": ">=18"
@@ -32,6 +32,10 @@
 	],
 	"author": "daoauth",
 	"license": "ISC",
+	"repository": {
+		"type": "git",
+		"url": "git+https://github.com/zktx-io/walrus-sites-preview.git"
+	},
 	"bugs": {
 		"url": "https://github.com/zktx-io/walrus-sites-preview/issues"
 	},
