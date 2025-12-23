@@ -1,0 +1,33 @@
+name: Deploy and Publish
+
+on:
+    release:
+        types: [published]
+
+permissions:
+    id-token: write
+    contents: write
+    actions: read
+
+jobs:
+    deploy-and-publish:
+        runs-on: ubuntu-latest
+
+        steps:
+            - uses: actions/checkout@v4
+            - uses: actions/setup-node@v4
+              with:
+                  node-version: "20"
+                  registry-url: "https://registry.npmjs.org"
+            - run: npm ci
+            - run: npm run build
+
+            - name: publish walrus-sites-preview package
+              uses: JS-DevTools/npm-publish@v3
+              id: walrus-sites-preview
+              with:
+                  access: public
+                  provenance: true
+                  token: ${{ secrets.NPM_TOKEN }}
+                  package: "package.json"
+                  strategy: upgrade
