@@ -1,0 +1,73 @@
+{
+	"name": "@zktx.io/walrus-sites-preview",
+	"description": "Local preview CLI for Walrus Sites (fetch from Sui + Walrus, or serve bundled static portal dist).",
+	"version": "0.0.1",
+	"type": "module",
+	"bin": {
+		"preview": "./preview.mjs"
+	},
+	"engines": {
+		"node": ">=18"
+	},
+	"scripts": {
+		"lint": "eslint .",
+		"lint:fix": "eslint . --fix",
+		"format": "prettier . --write",
+		"format:check": "prettier . --check",
+		"build": "node ./build-dist.mjs",
+		"start:mainnet": "node ./preview.mjs -mainnet",
+		"prepack": "npm run build"
+	},
+	"files": [
+		"dist/",
+		"preview.mjs",
+		"README.md"
+	],
+	"keywords": [
+		"walrus",
+		"walrus-sites",
+		"sui",
+		"preview",
+		"cli"
+	],
+	"author": "daoauth",
+	"license": "ISC",
+	"bugs": {
+		"url": "https://github.com/zktx-io/walrus-sites-preview/issues"
+	},
+	"homepage": "https://github.com/zktx-io/walrus-sites-preview#readme",
+	"devDependencies": {
+		"@eslint/js": "^9.20.0",
+		"@mysten/bcs": "^1.9.2",
+		"@mysten/suins": "^0.9.13",
+		"@opentelemetry/api": "^1.9.0",
+		"@opentelemetry/exporter-prometheus": "^0.208.0",
+		"@opentelemetry/sdk-metrics": "^2.2.0",
+		"base-x": "^5.0.1",
+		"buffer": "^6.0.3",
+		"copy-webpack-plugin": "^13.0.1",
+		"css-minimizer-webpack-plugin": "^7.0.4",
+		"eslint": "^9.20.0",
+		"eslint-config-prettier": "^10.0.1",
+		"globals": "^15.14.0",
+		"html-minimizer-webpack-plugin": "^5.0.4",
+		"https-browserify": "^1.0.0",
+		"pako": "^2.1.0",
+		"parse-domain": "^8.2.2",
+		"prettier": "^3.4.2",
+		"stream-browserify": "^3.0.0",
+		"stream-http": "^3.2.0",
+		"terser-webpack-plugin": "^5.3.16",
+		"ts-loader": "^9.5.4",
+		"typescript": "^5.9.3",
+		"typescript-eslint": "^8.23.0",
+		"url": "^0.11.4",
+		"util": "^0.12.5",
+		"webpack": "^5.104.1",
+		"webpack-cli": "^6.0.1",
+		"webpack-merge": "^6.0.1"
+	},
+	"dependencies": {
+		"@mysten/sui": "^1.45.2"
+	}
+}

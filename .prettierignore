@@ -1,0 +1,5 @@
+dist/
+node_modules/
+portal-worker/
+portal-common/
+package-lock.json

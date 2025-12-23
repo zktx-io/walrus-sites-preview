@@ -1,0 +1,21 @@
+{
+	"compilerOptions": {
+		"target": "esnext",
+		"module": "esnext",
+		"moduleResolution": "node",
+		"allowSyntheticDefaultImports": true,
+		"lib": ["esnext", "webworker", "dom"],
+		"baseUrl": ".",
+		"paths": {
+			"@lib/*": ["./portal-common/lib/src/*"],
+			"@templates/*": ["./portal-common/html_templates/*"]
+		},
+		"skipLibCheck": true
+	},
+	"include": [
+		"./portal-worker/src/**/*",
+		"./portal-common/lib/src/**/*",
+		"./portal-common/html_templates/*"
+	],
+	"exclude": ["node_modules", "dist"]
+}
