@@ -14,18 +14,6 @@ Installable CLI to preview Walrus Sites locally:
 npm i -D @zktx.io/walrus-sites-preview
 ```
 
-## Run (recommended via `npx`)
-
-```sh
-npx preview -testnet -id 0xYOUR_SITE_OBJECT_ID -port 3000
-```
-
-This starts a local server at `http://localhost:3000`. Running `preview` without options prints help.
-
-You can inspect the effective config at `http://localhost:3000/__config`.
-
-If you prefer a file-based config, create `config.json` next to your `package.json` and pass overrides as needed (the CLI flags win).
-
 ## Run (via npm script)
 
 Add this to your project:
@@ -46,6 +34,12 @@ Then run:
 npm run preview:testnet
 ```
 
+This starts a local server at `http://localhost:3000`.
+
+You can inspect the effective config at `http://localhost:3000/__config`.
+
+If you prefer a file-based config, create `config.json` next to your `package.json` and pass overrides as needed (the CLI flags win).
+
 To pass arguments dynamically, use `--`:
 
 ```sh
@@ -57,8 +51,9 @@ npm run preview -- -testnet -id 0xYOUR_SITE_OBJECT_ID -port 3000
 This section is for maintainers of this package. Consumers don’t need to build `dist/` manually (it ships in the npm package).
 
 - Vendored from the walrus-sites portal codebase:
-    - `portal/worker` → `./portal-worker`
-    - `portal/common` → `./portal-common`
+    - Source repo: https://github.com/MystenLabs/walrus-sites/tree/main/portal
+        - `portal/worker` → `./portal-worker`
+        - `portal/common` → `./portal-common`
 - Source: `./portal-worker/src` (service worker TS) and `./portal-worker/static` (static assets)
 - Shared libs: `./portal-common/lib/src` (shared implementation used by the worker)
 - Build configs: `./webpack.config.*.cjs` (kept in this repo, not published)

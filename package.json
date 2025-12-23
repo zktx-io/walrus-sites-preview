@@ -1,7 +1,7 @@
 {
 	"name": "@zktx.io/walrus-sites-preview",
 	"description": "Local preview CLI for Walrus Sites (fetch from Sui + Walrus, or serve bundled static portal dist).",
-	"version": "0.0.1",
+	"version": "0.0.2",
 	"type": "module",
 	"bin": {
 		"preview": "preview.mjs"
