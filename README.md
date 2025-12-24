@@ -1,28 +1,115 @@
-# Walrus Sites Preview (CLI)
+# Walrus Sites Preview
 
-Installable CLI to preview Walrus Sites locally:
+Preview Walrus Sites already deployed on testnet or mainnet locally using a familiar
+npm → localhost workflow — without setting up a portal.
 
-- **site mode**: fetch resources via Sui RPC + Walrus aggregator for a given site object ID
+This tool is for developers who want to quickly preview or debug a deployed Walrus Site in a simple, local-style environment.
+
+---
+
+## Why this exists
+
+Previewing a Walrus Site on testnet usually requires setting up a portal, which can be difficult for beginners and unnecessary for quick debugging.
+
+This CLI removes that friction.
+Give it a site object ID, and it serves the site locally.
+
+---
+
+## What it does
+
+- Loads a Walrus Site using a site object ID
+- Fetches resources via Sui RPC + Walrus aggregator
+- Serves the site locally (e.g. `http://localhost:3000`)
+- Focused purely on developer preview and debugging
+
+This is not a production hosting solution and does not replace portals.
+
+---
 
 ## Requirements
 
 - Node.js 18+
 
-## Install (as dev dependency)
+---
+
+## Install
 
 ```sh
 npm i -D @zktx.io/walrus-sites-preview
 ```
 
-## Run (via npm script)
+---
 
-Add this to your project:
+## Quick Start
+
+Add an npm script to your project:
 
 ```json
 {
 	"scripts": {
 		"preview:testnet": "preview -testnet -id 0xYOUR_SITE_OBJECT_ID -port 3000",
-		"preview:mainnet": "preview -mainnet -id 0xYOUR_SITE_OBJECT_ID -port 3000",
+		"preview:mainnet": "preview -mainnet -id 0xYOUR_SITE_OBJECT_ID -port 3000"
+	}
+}
+```
+
+Run:
+
+```sh
+npm run preview:testnet
+```
+
+Then open:
+
+`http://localhost:3000`
+
+You can inspect the resolved configuration at:
+
+`http://localhost:3000/__config`
+
+---
+
+## Configuration
+
+You can optionally create a `config.json` next to your `package.json`.
+
+CLI flags always override file-based config.
+
+If you use `-testnet` or `-mainnet`, the required RPC and aggregator URLs are filled automatically.
+
+`config.json` supports:
+
+- `siteObjectId` (required)
+- `rpcUrlList` (required unless using `-testnet` / `-mainnet`)
+- `aggregatorUrl` (required unless using `-testnet` / `-mainnet`)
+- `sitePackage` (required unless using `-testnet` / `-mainnet`)
+- `network` (optional, informational)
+- `host`, `port` (via CLI flags)
+
+Example:
+
+```json
+{
+	"network": "testnet",
+	"rpcUrlList": ["https://fullnode.testnet.sui.io"],
+	"aggregatorUrl": "https://aggregator.walrus-testnet.walrus.space",
+	"sitePackage": "0x...",
+	"siteObjectId": "0x..."
+}
+```
+
+To pass arguments dynamically:
+
+```sh
+npm i -D @zktx.io/walrus-sites-preview
+```
+
+Add a pass-through script:
+
+```json
+{
+	"scripts": {
 		"preview": "preview"
 	}
 }
@@ -31,65 +118,18 @@ Add this to your project:
 Then run:
 
 ```sh
-npm run preview:testnet
-```
-
-This starts a local server at `http://localhost:3000`.
-
-You can inspect the effective config at `http://localhost:3000/__config`.
-
-If you prefer a file-based config, create `config.json` next to your `package.json` and pass overrides as needed (the CLI flags win).
-
-To pass arguments dynamically, use `--`:
-
-```sh
 npm run preview -- -testnet -id 0xYOUR_SITE_OBJECT_ID -port 3000
 ```
 
-## Where `dist` comes from (portal build)
+---
 
-This section is for maintainers of this package. Consumers don’t need to build `dist/` manually (it ships in the npm package).
+## Source attribution
 
-- Vendored from the walrus-sites portal codebase:
-    - Source repo: https://github.com/MystenLabs/walrus-sites/tree/main/portal
-        - `portal/worker` → `./portal-worker`
-        - `portal/common` → `./portal-common`
-- Source: `./portal-worker/src` (service worker TS) and `./portal-worker/static` (static assets)
-- Shared libs: `./portal-common/lib/src` (shared implementation used by the worker)
-- Build configs: `./webpack.config.*.cjs` (kept in this repo, not published)
-- Build command:
+This package vendors and adapts parts of the Walrus Sites portal source code.
 
-```sh
-npm install
-npm run build
-```
+Where `dist` comes from (portal build):
 
-## Publish
-
-This package is set up to publish with `dist/` included. `npm pack` / `npm publish` runs `prepack`, which rebuilds `dist/` via `npm run build`.
-
-## Maintainers: static mode
-
-If you only want to serve a local static folder as a SPA:
-
-```sh
-npx preview --mode static --dist ./dist -port 3000
-```
-
-If your `dist` lives somewhere else:
-
-```sh
-npx preview --mode static --dist /absolute/path/to/dist
-```
-
-## Options
-
-```sh
-npx preview -port 8090 --open
-```
-
-Override site config without editing `config.json`:
-
-```sh
-npx preview --site-object-id 0x... --rpc https://fullnode.mainnet.sui.io --aggregator https://aggregator.walrus-mainnet.walrus.space --site-package 0x...
-```
+- Source repo: https://github.com/MystenLabs/walrus-sites/tree/main/portal
+- `portal/worker` → `./portal-worker`
+- `portal/common` → `./portal-common`
+- Source: `./portal-worker/src` (service worker TypeScript) and `./portal-worker/static` (static assets)
