@@ -194,7 +194,9 @@ function contentType(filePath) {
 function safeResolve(rootDir, urlPath) {
 	const rel = urlPath.replace(/^\/+/, "");
 	const resolved = path.resolve(rootDir, rel);
-	if (!resolved.startsWith(rootDir + path.sep) && resolved !== rootDir) return null;
+	const normalizedRoot = path.normalize(rootDir + path.sep);
+	const normalizedResolved = path.normalize(resolved + path.sep);
+	if (!normalizedResolved.startsWith(normalizedRoot)) return null;
 	return resolved;
 }
 
@@ -403,9 +405,10 @@ async function createSiteHandler(siteConfig) {
 		if (message.includes("ERR_MODULE_NOT_FOUND") || message.includes("Cannot find package")) {
 			throw new Error(
 				[
-					"Missing npm dependencies for site mode.",
-					"Run `npm install` in this package (requires network access).",
-					`Or run static mode: \`${CLI_NAME} --mode static\``,
+					"Failed to load @mysten/sui dependencies for site mode.",
+					"If you're running from this repo, run `npm install` here first.",
+					"If you're using the published package, reinstall it in your project: `npm i -D @zktx.io/walrus-sites-preview`.",
+					"Then run the command again.",
 				].join("\n"),
 			);
 		}
