@@ -11,7 +11,7 @@ This tool is for developers who want to quickly preview or debug a deployed Walr
 
 A short demo showing how to preview a deployed Walrus Site locally:
 
-> 📺 **Demo video:** _Coming soon_
+https://github.com/user-attachments/assets/c28c033a-92c5-4ee9-82e0-1406319842c7
 
 ---
 
