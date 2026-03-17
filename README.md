@@ -207,3 +207,8 @@ Origin of the bundled `dist` assets (portal build):
 - Included sources:
     - `./portal-worker/src` (service worker TypeScript)
     - `./portal-worker/static` (static assets)
+
+
+## License
+
+MIT
