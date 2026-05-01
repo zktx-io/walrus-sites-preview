@@ -6,6 +6,9 @@ dist/
 build/
 out/
 
+# downloaded upstream source
+.upstream/
+
 # TypeScript incremental build cache
 *.tsbuildinfo
 

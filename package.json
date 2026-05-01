@@ -15,6 +15,11 @@
 		"format": "prettier . --write",
 		"format:check": "prettier . --check",
 		"build": "node ./build-dist.mjs",
+		"test": "node ./scripts/verify-maintenance.mjs",
+		"verify": "node ./scripts/verify-maintenance.mjs",
+		"upstream:download": "node ./scripts/sync-walrus-upstream.mjs",
+		"upstream:sync": "node ./scripts/sync-walrus-upstream.mjs --apply",
+		"upstream:update": "node ./scripts/sync-walrus-upstream.mjs --apply --verify",
 		"start:mainnet": "node ./preview.mjs -mainnet",
 		"prepack": "npm run build"
 	},
