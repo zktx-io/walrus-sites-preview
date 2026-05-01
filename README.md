@@ -1,9 +1,20 @@
+<p align="center">
+	<img src="https://raw.githubusercontent.com/zktx-io/walrus-sites-preview/main/Walrus_Logotype_Black.png" alt="Walrus" width="360" />
+</p>
+
 # Walrus Sites Preview
 
-Preview Walrus Sites already deployed on testnet or mainnet locally using a familiar
-**npm → localhost** workflow — without setting up a portal.
+Preview Walrus Sites already deployed on testnet or mainnet through a familiar
+**npm → localhost** workflow.
 
-This tool is for developers who want to quickly preview or debug a deployed Walrus Site in a simple, local-style environment.
+Walrus Sites Preview is a small CLI for opening a current deployment locally
+during design review, QA, planning review, or stakeholder feedback. It is meant
+to sit alongside existing Walrus portal and deployment workflows, not replace
+them.
+
+A developer can share one command, and teammates can review the deployed site on
+`localhost` using the same kind of browser workflow they use for regular web
+projects.
 
 ---
 
@@ -29,14 +40,26 @@ Then open:
 http://localhost:3000
 ```
 
+You can also add `--open` to open the browser automatically:
+
+```sh
+npx @zktx.io/walrus-sites-preview -testnet -id 0xYOUR_SITE_OBJECT_ID --open
+```
+
 ---
 
 ## Why this exists
 
-Previewing a Walrus Site on testnet typically requires setting up a portal, which can be inconvenient for beginners and unnecessary for quick debugging.
+Walrus portals remain the right place for production access, integration
+testing, and portal-specific behavior. This CLI covers a narrower case: quickly
+checking an already deployed site during an internal review cycle.
 
-This CLI removes that friction.
-Provide a site object ID, and the site is served locally for immediate inspection.
+In that situation, teams often need a simple browser URL for the current
+deployment while keeping the existing deployment pipeline unchanged. Provide a
+site object ID, and this CLI fetches the resources and serves a local preview.
+
+The goal is to make review handoff simpler while preserving the established
+Walrus workflow.
 
 ---
 
@@ -45,9 +68,22 @@ Provide a site object ID, and the site is served locally for immediate inspectio
 - Loads a Walrus Site using a site object ID
 - Fetches resources via Sui RPC and the Walrus aggregator
 - Serves the site locally (for example, `http://localhost:3000`)
-- Focuses purely on developer preview and debugging
+- Provides a local review path that can sit alongside portal-based workflows
+- Supports preview, debugging, QA, and review workflows
 
 This is **not** a production hosting solution and does not replace Walrus portals.
+
+---
+
+## Who this is for
+
+- Developers who want a quick local preview of an already deployed Walrus Site
+- Web designers reviewing visual changes from a testnet deployment
+- Planners, PMs, and QA reviewers checking an in-progress site before release
+- Teams that want a lightweight local review command for deployed Walrus Sites
+
+For many internal review sessions, a reviewer can start with the command and the
+site object ID. Wallets and deployment keys are not part of the preview flow.
 
 ---
 
@@ -70,7 +106,7 @@ npm i -D @zktx.io/walrus-sites-preview
 
 ## Quick Start (npm scripts)
 
-Add an npm script to your project:
+Add an npm script to your project so teammates can run a familiar command:
 
 ```json
 {
@@ -207,7 +243,6 @@ Origin of the bundled `dist` assets (portal build):
 - Included sources:
     - `./portal-worker/src` (service worker TypeScript)
     - `./portal-worker/static` (static assets)
-
 
 ## License
 
