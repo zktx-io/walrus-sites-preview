@@ -234,6 +234,9 @@ npm run preview -- -testnet -id 0xYOUR_SITE_OBJECT_ID -port 3000
 
 This package vendors and adapts parts of the Walrus Sites portal source code.
 
+The vendored portal worker code is currently aligned with the upstream
+`portal/worker` package version `2.9.0`.
+
 Origin of the bundled `dist` assets (portal build):
 
 - Source repository:

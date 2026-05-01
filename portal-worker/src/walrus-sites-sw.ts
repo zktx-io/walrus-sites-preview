@@ -11,6 +11,7 @@ import { RPCSelector } from "@lib/rpc_selector";
 import { SuiNSResolver } from "@lib/suins";
 import { WalrusSitesRouter } from "@lib/routing";
 import { Network } from "@lib/types";
+import { parsePriorityUrlList, PriorityExecutor } from "@lib/priority_executor";
 
 // This is to get TypeScript to recognize `clients` and `self` Default type of `self` is
 // `WorkerGlobalScope & typeof globalThis` https://github.com/microsoft/TypeScript/issues/14877
@@ -25,17 +26,26 @@ const suinsClientNetwork = process.env.SUINS_CLIENT_NETWORK;
 if (!suinsClientNetwork) {
     throw new Error("Missing SUINS_CLIENT_NETWORK environment variable");
 }
-if (!['testnet', 'mainnet'].includes(suinsClientNetwork)) {
+if (!["testnet", "mainnet"].includes(suinsClientNetwork)) {
     throw new Error("Invalid SUINS_CLIENT_NETWORK environment variable");
 }
-const aggregatorUrl = process.env.AGGREGATOR_URL;
-const rpcSelector = new RPCSelector(rpcUrlList.split(','), suinsClientNetwork as Network);
+const aggregatorUrlList = process.env.AGGREGATOR_URL_LIST || process.env.AGGREGATOR_URL;
+if (!aggregatorUrlList) {
+    throw new Error("Missing AGGREGATOR_URL_LIST environment variable");
+}
+
+const rpcPriorityUrls = parsePriorityUrlList(rpcUrlList);
+const aggregatorPriorityUrls = parsePriorityUrlList(aggregatorUrlList, 3);
+
+const rpcSelector = new RPCSelector(rpcPriorityUrls, suinsClientNetwork as Network);
+const aggregatorExecutor = new PriorityExecutor(aggregatorPriorityUrls);
+
 export const urlFetcher = new UrlFetcher(
-    new ResourceFetcher(rpcSelector, process.env.SITE_PACKAGE),
+    new ResourceFetcher(rpcSelector, process.env.ORIGINAL_PACKAGE_ID),
     new SuiNSResolver(rpcSelector),
     new WalrusSitesRouter(rpcSelector),
-    aggregatorUrl,
-    true // b36 domain support should always be enabled for service workers.
+    aggregatorExecutor,
+    true, // b36 domain support should always be enabled for service workers.
 );
 
 self.addEventListener("install", (_event) => {
@@ -71,6 +81,11 @@ self.addEventListener("fetch", async (event) => {
     // This will only work for service-worker portals.
     const walrusPath = getBlobIdLink(url);
     if (walrusPath) {
+        // Use the highest priority aggregator URL for redirects
+        const aggregatorUrl = aggregatorExecutor.getHighestPriorityUrl();
+        if (!aggregatorUrl) {
+            throw new Error("No aggregator URL available");
+        }
         event.respondWith(redirectToAggregatorUrlResponse(walrusPath, aggregatorUrl));
         return;
     }
@@ -83,7 +98,6 @@ self.addEventListener("fetch", async (event) => {
     console.log("Parsed URL: ", parsedUrl);
 
     if (requestDomain === portalDomain && parsedUrl && parsedUrl.subdomain) {
-
         // Fetches the page resources and handles the cache if it exists
         const handleFetchRequest = async (): Promise<Response> => {
             if ("caches" in self) {

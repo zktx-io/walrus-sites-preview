@@ -8,42 +8,23 @@ import { fileURLToPath } from "node:url";
 
 const __filename = fileURLToPath(import.meta.url);
 const repoRoot = path.resolve(path.dirname(__filename), "..");
-const npmCommand = process.platform === "win32" ? "npm.cmd" : "npm";
 
 const DEFAULT_REPO = "MystenLabs/walrus-sites";
 const DEFAULT_REF = "main";
 const DEFAULT_CACHE_DIR = ".upstream/walrus-sites";
 
-const COPY_TARGETS = [
-	{
-		label: "portal worker",
-		upstream: "portal/worker",
-		local: "portal-worker",
-	},
-	{
-		label: "portal common",
-		upstream: "portal/common",
-		local: "portal-common",
-	},
-];
-
 function usage() {
 	return [
-		"Download and optionally sync upstream Walrus Sites portal sources.",
+		"Download upstream Walrus Sites source into a disposable cache directory.",
 		"",
 		"Usage:",
 		"  npm run upstream:download",
-		"  npm run upstream:sync",
-		"  npm run upstream:update",
 		"  node ./scripts/sync-walrus-upstream.mjs [options]",
 		"",
 		"Options:",
 		`  --repo <repo>       GitHub repo, owner/name or URL (default: ${DEFAULT_REPO})`,
 		`  --ref <ref>         Upstream branch, tag, or commit (default: ${DEFAULT_REF})`,
 		`  --cache-dir <path>  Download directory (default: ${DEFAULT_CACHE_DIR})`,
-		"  --apply            Replace local vendored source directories",
-		"  --verify           Run npm run verify after applying",
-		"  --force            Overwrite dirty vendored source directories",
 		"  -h, --help         Show this help",
 	].join("\n");
 }
@@ -53,9 +34,6 @@ function parseArgs(argv) {
 		repo: DEFAULT_REPO,
 		ref: DEFAULT_REF,
 		cacheDir: path.resolve(repoRoot, DEFAULT_CACHE_DIR),
-		apply: false,
-		verify: false,
-		force: false,
 		help: false,
 	};
 
@@ -84,18 +62,6 @@ function parseArgs(argv) {
 			options.cacheDir = path.resolve(repoRoot, takeValue());
 			continue;
 		}
-		if (arg === "--apply") {
-			options.apply = true;
-			continue;
-		}
-		if (arg === "--verify") {
-			options.verify = true;
-			continue;
-		}
-		if (arg === "--force") {
-			options.force = true;
-			continue;
-		}
 
 		throw new Error(`Unknown argument: ${arg}`);
 	}
@@ -106,24 +72,14 @@ function parseArgs(argv) {
 function run(command, args, options = {}) {
 	const result = childProcess.spawnSync(command, args, {
 		cwd: options.cwd ?? repoRoot,
-		env: options.env ?? process.env,
 		stdio: options.stdio ?? "inherit",
-		encoding: "utf8",
 	});
 
-	if (options.allowFailure) return result;
 	if (result.error) throw result.error;
 	if (result.status !== 0) {
 		throw new Error(`${command} ${args.join(" ")} failed with status ${result.status}`);
 	}
 	return result;
-}
-
-function output(command, args, options = {}) {
-	return run(command, args, {
-		...options,
-		stdio: ["ignore", "pipe", "pipe"],
-	});
 }
 
 function githubRepoSlug(repo) {
@@ -214,47 +170,6 @@ async function downloadUpstreamArchive(options) {
 	return archiveUrl;
 }
 
-function assertSourcePathsExist(cacheDir) {
-	for (const target of COPY_TARGETS) {
-		const source = path.join(cacheDir, target.upstream);
-		if (!fs.existsSync(source) || !fs.statSync(source).isDirectory()) {
-			throw new Error(`Missing upstream ${target.label} directory: ${source}`);
-		}
-	}
-}
-
-function assertVendoredTargetsClean(force) {
-	const targetPaths = COPY_TARGETS.map((target) => target.local);
-	const result = output("git", ["status", "--porcelain", "--", ...targetPaths], {
-		allowFailure: true,
-	});
-
-	if (result.status !== 0) return;
-
-	const dirty = result.stdout.trim();
-	if (!dirty || force) return;
-
-	throw new Error(
-		[
-			"Refusing to overwrite local changes in vendored source directories.",
-			"",
-			dirty,
-			"",
-			"Commit or stash those changes first, or rerun with --force.",
-		].join("\n"),
-	);
-}
-
-function copyVendoredSources(cacheDir) {
-	for (const target of COPY_TARGETS) {
-		const source = path.join(cacheDir, target.upstream);
-		const destination = path.join(repoRoot, target.local);
-		console.log(`Syncing ${target.upstream} -> ${target.local}`);
-		fs.rmSync(destination, { recursive: true, force: true });
-		fs.cpSync(source, destination, { recursive: true });
-	}
-}
-
 function writeSyncMetadata(options, archiveUrl) {
 	const metadataPath = path.join(path.dirname(options.cacheDir), "last-sync.json");
 	const metadata = {
@@ -262,7 +177,6 @@ function writeSyncMetadata(options, archiveUrl) {
 		ref: options.ref,
 		archiveUrl,
 		syncedAt: new Date().toISOString(),
-		targets: COPY_TARGETS,
 	};
 	fs.mkdirSync(path.dirname(metadataPath), { recursive: true });
 	fs.writeFileSync(metadataPath, `${JSON.stringify(metadata, null, 2)}\n`);
@@ -276,25 +190,11 @@ async function main() {
 	}
 
 	const archiveUrl = await downloadUpstreamArchive(options);
-	assertSourcePathsExist(options.cacheDir);
 	writeSyncMetadata(options, archiveUrl);
 
-	console.log(`Upstream ready: ${options.repo} @ ${options.ref}`);
-	console.log(`Cached at: ${options.cacheDir}`);
-
-	if (!options.apply) {
-		console.log("Download complete. Re-run with --apply to replace local vendored sources.");
-		return;
-	}
-
-	assertVendoredTargetsClean(options.force);
-	copyVendoredSources(options.cacheDir);
-
-	console.log("Vendored sources updated. Review the git diff before committing.");
-
-	if (options.verify) {
-		run(npmCommand, ["run", "verify"]);
-	}
+	console.log(`Downloaded upstream: ${options.repo} @ ${options.ref}`);
+	console.log(`Extracted to: ${options.cacheDir}`);
+	console.log("No vendored files were changed.");
 }
 
 try {

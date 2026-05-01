@@ -4,7 +4,13 @@ import tseslint from "typescript-eslint";
 
 export default [
 	{
-		ignores: ["dist/**", "node_modules/**", "portal-worker/**", "portal-common/**"],
+		ignores: [
+			"dist/**",
+			"node_modules/**",
+			".upstream/**",
+			"portal-worker/**",
+			"portal-common/**",
+		],
 	},
 
 	js.configs.recommended,

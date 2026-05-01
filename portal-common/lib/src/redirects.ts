@@ -4,7 +4,7 @@
 import { DomainDetails } from "@lib/types/index";
 import { getDomain } from "@lib/domain_parsing";
 import { blobAggregatorEndpoint } from "@lib/aggregator";
-import { SuiObjectResponse } from "@mysten/sui/client";
+import { SuiObjectResponse } from "@mysten/sui/jsonRpc";
 import logger from "@lib/logger";
 
 /**
@@ -24,10 +24,7 @@ export function redirectToPortalURLResponse(
 /**
  * Redirects to the aggregator URL.
  */
-export function redirectToAggregatorUrlResponse(
-    blobId: string,
-    aggregatorUrl: string,
-): Response {
+export function redirectToAggregatorUrlResponse(blobId: string, aggregatorUrl: string): Response {
     // Redirect to the walrus site for the specified domain and path
     const redirectUrl = blobAggregatorEndpoint(blobId, aggregatorUrl);
     logger.info("Redirecting to the Walrus Blob link", { redirectUrl: redirectUrl });
@@ -39,7 +36,7 @@ export function redirectToAggregatorUrlResponse(
  */
 export function checkRedirect(object: SuiObjectResponse): string | null {
     logger.info("Checking if the request should be redirected (existing Display object)", {
-        objectId: object.data.objectId,
+        objectId: object.data?.objectId,
     });
     if (object.data && object.data.display) {
         let display = object.data.display;

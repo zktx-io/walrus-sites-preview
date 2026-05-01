@@ -1,7 +1,7 @@
 {
 	"name": "@zktx.io/walrus-sites-preview",
 	"description": "Local preview CLI for Walrus Sites (fetch from Sui + Walrus, or serve bundled static portal dist).",
-	"version": "0.0.3",
+	"version": "0.1.0",
 	"type": "module",
 	"bin": {
 		"preview": "preview.mjs"
@@ -18,8 +18,6 @@
 		"test": "node ./scripts/verify-maintenance.mjs",
 		"verify": "node ./scripts/verify-maintenance.mjs",
 		"upstream:download": "node ./scripts/sync-walrus-upstream.mjs",
-		"upstream:sync": "node ./scripts/sync-walrus-upstream.mjs --apply",
-		"upstream:update": "node ./scripts/sync-walrus-upstream.mjs --apply --verify",
 		"start:mainnet": "node ./preview.mjs -mainnet",
 		"prepack": "npm run build"
 	},

@@ -14,32 +14,57 @@ import {
     noObjectIdFound,
     fullNodeFail,
     generateHashErrorResponse,
-    resourceNotFound,
     custom404NotFound,
     aggregatorFail,
+    blobUnavailable,
+    redirectLoopDetected,
 } from "@lib/http/http_error_responses";
 import { blobAggregatorEndpoint, quiltAggregatorEndpoint } from "@lib/aggregator";
 import { toBase64 } from "@mysten/bcs";
 import { sha256 } from "@lib/crypto";
 import { WalrusSitesRouter } from "@lib/routing";
-import { HttpStatusCodes } from "@lib/http/http_status_codes";
-import logger from "@lib/logger";
+import logger, { formatError } from "@lib/logger";
 import BlocklistChecker from "@lib/blocklist_checker";
 import { QuiltPatch } from "@lib/quilt";
 import { instrumentationFacade } from "./instrumentation";
+import { ExecuteResult, PriorityExecutor } from "@lib/priority_executor";
+
+type AggregatorResult =
+    | { type: "ok"; body: ArrayBuffer; elapsedMs: number }
+    | { type: "blob_unavailable" };
 
 export const QUILT_PATCH_ID_INTERNAL_HEADER = "x-wal-quilt-patch-internal-id";
+
 /**
-* Includes all the logic for fetching the URL contents of a walrus site.
-*/
+ * Discriminated union returned by `fetchUrl`.
+ *
+ * Uses a `status` field as the discriminator, similar to Rust enums.
+ * TypeScript will narrow the type when you check `result.status`,
+ * forcing callers to handle each case before accessing the response.
+ *
+ * - `Ok`: Successfully fetched the resource
+ * - `ResourceNotFound`: The on-chain resource doesn't exist (try fallbacks)
+ * - `BlobUnavailable`: The blob exists on-chain but expired on Walrus
+ * - `AggregatorFail`: The aggregator is unreachable or returned a server error
+ * - `HashMismatch`: The blob hash doesn't match the on-chain hash
+ */
+export type FetchUrlResult =
+    | { status: "Ok"; response: Response }
+    | { status: "ResourceNotFound" }
+    | { status: "BlobUnavailable"; response: Response }
+    | { status: "AggregatorFail"; response: Response }
+    | { status: "HashMismatch"; response: Response };
+/**
+ * Includes all the logic for fetching the URL contents of a walrus site.
+ */
 export class UrlFetcher {
     constructor(
         private resourceFetcher: ResourceFetcher,
         private suinsResolver: SuiNSResolver,
         private wsRouter: WalrusSitesRouter,
-        private aggregatorUrl: string,
-        private b36DomainResolutionSupport: boolean
-    ) { }
+        private aggregatorExecutor: PriorityExecutor,
+        private b36DomainResolutionSupport: boolean,
+    ) {}
 
     /**
      * Resolves the subdomain to an object ID, and gets the corresponding resources.
@@ -50,9 +75,13 @@ export class UrlFetcher {
     public async resolveDomainAndFetchUrl(
         parsedUrl: DomainDetails,
         resolvedObjectId: string | null,
-        blocklistChecker?: BlocklistChecker
+        blocklistChecker?: BlocklistChecker,
     ): Promise<Response> {
-        logger.info("Resolving the subdomain to an object ID and retrieving its resources", { subdomain: parsedUrl.subdomain, path: parsedUrl.path });
+        logger.info("Resolving the subdomain to an object ID and retrieving its resources", {
+            subdomain: parsedUrl.subdomain,
+            path: parsedUrl.path,
+        });
+        instrumentationFacade.increaseRequestsMade(1);
         if (!resolvedObjectId) {
             const resolveObjectResult = await this.resolveObjectId(parsedUrl);
             const isObjectId = typeof resolveObjectResult == "string";
@@ -61,75 +90,106 @@ export class UrlFetcher {
             }
             resolvedObjectId = resolveObjectResult;
         }
-        instrumentationFacade.increaseRequestsMade(1, resolvedObjectId);
 
-        if (blocklistChecker && await blocklistChecker.isBlocked(resolvedObjectId)) {
+        if (blocklistChecker && (await blocklistChecker.isBlocked(resolvedObjectId))) {
             return siteNotFound();
         }
 
-        // Rerouting based on the contents of the routes object,
-        // constructed using the ws-resource.json.
-
-        // Initiate a fetch request to get the Routes object in case the request
-        // to the initial unfiltered path fails.
-        const routesPromise = this.wsRouter.getRoutes(resolvedObjectId);
+        // Initiate a fetch request to get the Routes and Redirects objects
+        // in case the request to the initial unfiltered path fails.
+        const routingPromise = this.wsRouter.getRoutesAndRedirects(resolvedObjectId);
 
         // Fetch the URL using the initial path.
-        const fetchPromise = await this.fetchUrl(resolvedObjectId, parsedUrl.path);
+        const fetchResult = await this.fetchUrl(resolvedObjectId, parsedUrl.path);
 
-        // If the fetch of the initial path succeeds, return the response.
-        if (fetchPromise.status !== HttpStatusCodes.NOT_FOUND) {
-            return fetchPromise;
+        // Only fall through to routing/fallbacks when the on-chain resource
+        // doesn't exist. Terminal errors (expired blob, aggregator failure, etc.)
+        // are returned immediately.
+        if (fetchResult.status !== "ResourceNotFound") {
+            return fetchResult.response;
         }
 
-        // If the fetch fails, check if the path can be matched using
-        // the Routes DF and fetch the redirected path.
-        const routes = await routesPromise;
+        // The on-chain resource was not found — try redirects, route matching, and fallbacks.
+        const { routes, redirects } = await routingPromise;
 
-        if (!routes) {
-            logger.warn(
-                "No Routes object found for the object ID",
-                { resolvedObjectIdNoRoutes: resolvedObjectId }
-            );
-            // Fall through to 404.html check
+        // Check redirects first (takes priority over routes).
+        if (redirects) {
+            const redirect = this.wsRouter.matchPathToRedirect(parsedUrl.path, redirects);
+            if (redirect) {
+                if (redirect.location === parsedUrl.path) {
+                    logger.warn("Redirect self-loop detected", {
+                        subdomain: parsedUrl.subdomain,
+                        path: parsedUrl.path,
+                    });
+                    return redirectLoopDetected();
+                }
+                logger.info("Redirect match found", {
+                    subdomain: parsedUrl.subdomain,
+                    path: parsedUrl.path,
+                    location: redirect.location,
+                    statusCode: redirect.status_code,
+                });
+                return new Response(null, {
+                    status: redirect.status_code,
+                    headers: { Location: redirect.location },
+                });
+            }
         }
 
-        // Try matching route if routes exist
+        // Try matching route if routes exist.
         if (routes) {
-            const matchingRoute = this.wsRouter.matchPathToRoute(parsedUrl.path, routes);
+            const { match: matchingRoute, regexOnlyPatterns } = this.wsRouter.matchPathToRoute(
+                parsedUrl.path,
+                routes,
+            );
+            if (regexOnlyPatterns.length > 0) {
+                logger.warn("Route patterns match via regex but not via glob (picomatch)", {
+                    subdomain: parsedUrl.subdomain,
+                    siteObjectId: resolvedObjectId,
+                    path: parsedUrl.path,
+                    regexOnlyPatterns,
+                });
+            }
             if (matchingRoute) {
-                // If the route is found, fetch the redirected path.
-                const routeResponse = await this.fetchUrl(resolvedObjectId, matchingRoute);
-                if (routeResponse.status !== HttpStatusCodes.NOT_FOUND) {
-                    return routeResponse;
+                const routeResult = await this.fetchUrl(resolvedObjectId, matchingRoute);
+                if (routeResult.status !== "ResourceNotFound") {
+                    return routeResult.response;
                 }
             } else {
-                logger.warn(
-                    `No matching route found for ${parsedUrl.path}`,
-                    {
-                        resolvedObjectIdNoMatchingRoute: resolvedObjectId
-                    });
+                logger.warn(`No matching route found for ${parsedUrl.path}`, {
+                    resolvedObjectIdNoMatchingRoute: resolvedObjectId,
+                });
             }
         }
 
         // Try to fetch 404.html from the deployed site
         if (parsedUrl.path !== "/404.html") {
-            const notFoundPage = await this.fetchUrl(resolvedObjectId, "/404.html");
-            if (notFoundPage.status !== HttpStatusCodes.NOT_FOUND) {
-                return notFoundPage;
+            const notFoundResult = await this.fetchUrl(resolvedObjectId, "/404.html");
+            if (notFoundResult.status === "Ok") {
+                // Success - return the site's custom 404 page
+                return notFoundResult.response;
             }
 
-            // Site doesn't have its own 404 page — use portal fallback
+            if (
+                notFoundResult.status !== "ResourceNotFound" &&
+                notFoundResult.status !== "BlobUnavailable"
+            ) {
+                // Terminal errors (aggregator failure, hash mismatch) are returned as-is.
+                return notFoundResult.response;
+            }
+
+            // The site either doesn't have a 404 page, or the 404 page's blob
+            // has expired — either way, use the portal's own fallback.
             return custom404NotFound();
         }
 
         return custom404NotFound();
     }
 
-    async resolveObjectId(
-        parsedUrl: DomainDetails,
-    ): Promise<string | Response> {
-        logger.info("Resolving the subdomain to an object ID", { subdomain: parsedUrl.subdomain });
+    async resolveObjectId(parsedUrl: DomainDetails): Promise<string | Response> {
+        logger.info("Resolving the subdomain to an object ID", {
+            subdomain: parsedUrl.subdomain,
+        });
 
         // Resolve to an objectId using a hard-coded subdomain.
         const hardCodedObjectId = this.suinsResolver.hardcodedSubdomains(parsedUrl.subdomain);
@@ -151,166 +211,207 @@ export class UrlFetcher {
         try {
             const objectId = await this.suinsResolver.resolveSuiNsAddress(parsedUrl.subdomain);
             if (objectId) return objectId;
-            logger.warn(
-                "Unable to resolve the SuiNS domain. Is the domain valid?",
-                { subdomain: parsedUrl.subdomain }
-            )
+            logger.warn("Unable to resolve the SuiNS domain. Is the domain valid?", {
+                subdomain: parsedUrl.subdomain,
+            });
             return noObjectIdFound();
         } catch {
-            logger.error(
-                "Unable to reach the full node during suins domain resolution",
-                { subdomain: parsedUrl.subdomain }
-            );
+            logger.error("Unable to reach the full node during suins domain resolution", {
+                subdomain: parsedUrl.subdomain,
+            });
             return fullNodeFail();
         }
     }
 
     /**
      * Fetches the URL of a walrus site.
+     *
+     * Returns a discriminated union so that the caller can distinguish between
+     * "resource doesn't exist on-chain" (eligible for fallback routing) and
+     * terminal errors like expired blobs or aggregator failures.
+     *
      * @param objectId - The object ID of the site object.
      * @param path - The path of the site resource to fetch. e.g. /index.html
      */
-    public async fetchUrl(
-        objectId: string,
-        path: string,
-    ): Promise<Response> {
+    public async fetchUrl(objectId: string, path: string): Promise<FetchUrlResult> {
         const result = await this.resourceFetcher.fetchResource(objectId, path, new Set<string>());
         if (!isResource(result) || !result.blob_id) {
-            // TODO: #SEW-516 This gets overridden by custom404NotFound from the caller of this
-            // function
-            return resourceNotFound();
+            return { status: "ResourceNotFound" };
         }
 
-        logger.info("Successfully fetched resource!", { fetchedResourceResult: JSON.stringify(result) });
+        logger.info("Successfully fetched resource!", {
+            fetchedResourceResult: JSON.stringify(result),
+        });
 
-        const quilt_patch_internal_id = result.headers.get(QUILT_PATCH_ID_INTERNAL_HEADER)
-        let aggregator_endpoint: URL;
+        const quilt_patch_internal_id = result.headers.get(QUILT_PATCH_ID_INTERNAL_HEADER);
         let blobOrPatchId: string;
+        let endpointBuilder: (aggregatorUrl: string) => URL;
         if (quilt_patch_internal_id) {
-            const quilt_patch = new QuiltPatch(result.blob_id, quilt_patch_internal_id)
-            const quilt_patch_id = quilt_patch.derive_id()
+            const quilt_patch = new QuiltPatch(result.blob_id, quilt_patch_internal_id);
+            const quilt_patch_id = quilt_patch.derive_id();
             blobOrPatchId = quilt_patch_id;
-            logger.info("Resource is stored as a quilt patch.", { quilt_patch_id })
-            aggregator_endpoint = quiltAggregatorEndpoint(quilt_patch_id, this.aggregatorUrl)
+            logger.info("Resource is stored as a quilt patch.", { quilt_patch_id });
+            endpointBuilder = (url) => quiltAggregatorEndpoint(quilt_patch_id, url);
         } else {
-            logger.info("Resource is stored as a blob.", { blob_id: result.blob_id })
+            logger.info("Resource is stored as a blob.", { blob_id: result.blob_id });
             blobOrPatchId = result.blob_id;
-            aggregator_endpoint = blobAggregatorEndpoint(result.blob_id, this.aggregatorUrl)
+            endpointBuilder = (url) => blobAggregatorEndpoint(result.blob_id, url);
         }
 
         // We have a resource, get the range header.
-        let range_header = optionalRangeToRequestHeaders(result.range);
-        logger.info("Fetching blob from aggregator", { aggregatorUrl: this.aggregatorUrl, blob_id: result.blob_id })
+        const range_header = optionalRangeToRequestHeaders(result.range);
+        logger.info("Fetching blob from aggregator", { blob_id: result.blob_id });
 
-        const aggregatorFetchingStart = Date.now();
-        const response = await this.fetchWithRetry(aggregator_endpoint, { headers: range_header });
-        if (!response.ok) {
-            if (response.status === 404) {
-                // TODO: #SEW-516 This gets overridden by custom404NotFound from the caller of this
-                // function
-                return resourceNotFound();
-            } else if (response.status >= 500 && response.status < 600) {
-                logger.error(
-                    "Failed to fetch resource! Response from aggregator endpoint not ok.",
-                    { path: result.path, status: response.status }
-                );
-                return aggregatorFail();
-            } else { // If we do not get one of the above, it makes sense to log it and throw
-                // another error in order to investigate how we to handle this new type of response.
-                let contents = await response.text();
-                logger.warn("Unexpected response from aggregator.", { aggregator_endpoint, status: response.status, contents });
-                // Will return genericError.
-                throw new Error(`Unhandled response status from aggregator. Response status: ${response.status}`);
-            }
+        // Use priority executor for aggregator fallback
+        let aggregatorResult: AggregatorResult;
+        try {
+            aggregatorResult = await this.aggregatorExecutor.invoke(
+                async (aggregatorUrl): Promise<ExecuteResult<AggregatorResult>> => {
+                    const endpoint = endpointBuilder(aggregatorUrl);
+                    logger.debug("Trying aggregator", {
+                        aggregatorUrl,
+                        endpoint: endpoint.toString(),
+                    });
+                    return this.tryAggregator(endpoint, range_header);
+                },
+            );
+        } catch (error) {
+            // All aggregators failed (exhausted retries or stopped)
+            logger.error("All aggregators failed", {
+                error: formatError(error),
+                path,
+                blobOrPatchId,
+            });
+            return {
+                status: "AggregatorFail",
+                response: aggregatorFail(),
+            };
         }
-        const aggregatorFetchingDuration = Date.now() - aggregatorFetchingStart;
-        instrumentationFacade.recordAggregatorTime(aggregatorFetchingDuration, { siteId: objectId, path, blobOrPatchId });
 
-        const body = await response.arrayBuffer();
+        // Handle semantic result
+        if (aggregatorResult.type === "blob_unavailable") {
+            return {
+                status: "BlobUnavailable",
+                response: blobUnavailable(blobOrPatchId),
+            };
+        }
+
+        instrumentationFacade.recordAggregatorTime(aggregatorResult.elapsedMs, objectId);
+
+        const body = aggregatorResult.body;
         // Verify the integrity of the aggregator response by hashing
         // the response contents.
         const h10b = toBase64(await sha256(body));
         if (result.blob_hash != h10b) {
             logger.error(
                 "Checksum mismatch! The hash of the fetched resource does not " +
-                "match the hash of the aggregator response.", {
-                path: result.path,
-                blobHash: result.blob_hash,
-                aggrHash: h10b
-            });
-            return generateHashErrorResponse();
+                    "match the hash of the aggregator response.",
+                {
+                    path: result.path,
+                    blobHash: result.blob_hash,
+                    aggrHash: h10b,
+                },
+            );
+            return {
+                status: "HashMismatch",
+                response: generateHashErrorResponse(),
+            };
         }
 
-        return new Response(body, {
-            headers: {
-                ...Object.fromEntries(result.headers),
-                "x-resource-sui-object-version": result.version,
-                "x-resource-sui-object-id": result.objectId,
-                "x-unix-time-cached": Date.now().toString(),
-            },
-        });
+        return {
+            status: "Ok",
+            response: new Response(body, {
+                status: path === "/404.html" ? 404 : 200,
+                headers: {
+                    ...Object.fromEntries(result.headers),
+                    "x-resource-sui-object-version": result.version,
+                    "x-resource-sui-object-id": result.objectId,
+                    "x-unix-time-cached": Date.now().toString(),
+                },
+            }),
+        };
     }
 
-    /**
-     * Attempts to fetch a resource from the given input URL or Request object, with retry logic.
-     *
-     * Retries the fetch operation up to a specified number of attempts in case of failure,
-     * with a delay between each retry. Logs the status and error messages during retries.
-     *
-     * @param input - The URL string, URL object, or Request object representing the resource to fetch.
-     * @param init - Optional fetch options such as headers, method, and body.
-     * @param retries - The maximum number of retry attempts (default is 3).
-     * @param delayMs - The delay in milliseconds between retry attempts (default is 1000ms).
-     * @returns A promise that resolves with the successful `Response` object or rejects with the last error.
-     */
-    private async fetchWithRetry(
-        input: string | URL | globalThis.Request,
-        init?: RequestInit,
-        retries: number = 2,
-        delayMs: number = 1000
-    ): Promise<Response> {
-        let lastError: unknown;
+    private async tryAggregator(
+        url: URL,
+        headers: { [key: string]: string },
+    ): Promise<ExecuteResult<AggregatorResult>> {
+        const start = Date.now();
 
-        if (retries < 0) {
-            logger.warn(
-                `Invalid retries value (${retries}). Falling back to a single fetch call.`
-            );
-            retries = 0;
-        }
+        try {
+            const response = await fetch(url, { headers });
 
-        for (let attempt = 0; attempt <= retries; attempt++) {
-            try {
-                const response = await fetch(input, init);
-
-                if (response.status === 404) { // If 404 error, log the response status and do not retry.
-                    logger.info("Aggregator responded with NOT_FOUND (404)", { input })
-                } else if (response.status >= 500 && response.status < 600) {
-                    if (attempt === retries) {
-                        return response;
-                    }
-                    throw new Error(`Server responded with status ${response.status}`);
-                } else if (!response.ok) { // If non-5xx error, log the response status and do not retry.
-                    logger.warn("Aggregator responded with unexpected status.", { input, status: response.status });
-                }
-
-                return response;
-            } catch (error) {
-                logger.error(
-                    "Fetch attempt failed",
-                    {
-                        attempt: attempt + 1,
-                        totalAttempts: retries + 1,
-                        error: error instanceof Error ? error.message : error,
-                    });
-                lastError = error;
+            if (response.ok) {
+                const body = await response.arrayBuffer();
+                return {
+                    status: "success",
+                    value: { type: "ok", body, elapsedMs: Date.now() - start },
+                };
             }
 
-            // Wait before retrying
-            if (attempt < retries) {
-                await new Promise(resolve => setTimeout(resolve, delayMs));
+            // Aggregator error codes (from aggregator_openapi.yaml):
+            // 403: Blob size exceeds maximum allowed size configured for this aggregator.
+            // 404: Blob not stored on Walrus (likely expired) or quilt patch doesn't exist.
+            // 416: Invalid byte range parameters (would indicate a bug since ranges come from on-chain data).
+            // 5xx: Internal server error.
+
+            if (response.status === 404) {
+                logger.warn("Blob not available on aggregator (likely expired)", {
+                    url: `${url.origin}${url.pathname}`,
+                });
+                return { status: "success", value: { type: "blob_unavailable" } };
             }
+
+            if (response.status === 403) {
+                // Blob size exceeds this aggregator's configured max — try next aggregator
+                // which may have a higher limit.
+                logger.error("Aggregator rejected blob due to size limit", {
+                    url: `${url.origin}${url.pathname}`,
+                });
+                return {
+                    status: "retry-next",
+                    error: new Error("Aggregator returned 403 (size limit)"),
+                };
+            }
+
+            if (response.status === 502) {
+                logger.warn("Aggregator 502, trying next", { url: `${url.origin}${url.pathname}` });
+                return {
+                    status: "retry-next",
+                    error: new Error(`Aggregator returned 502`),
+                };
+            }
+
+            if (response.status >= 500) {
+                logger.warn("Aggregator 5xx, retrying", {
+                    url: `${url.origin}${url.pathname}`,
+                    status: response.status,
+                });
+                return {
+                    status: "retry-same",
+                    error: new Error(`Aggregator returned ${response.status}`),
+                };
+            }
+
+            // 4xx (except 404) - client error, stop
+            logger.error("Aggregator client error", {
+                url: `${url.origin}${url.pathname}`,
+                status: response.status,
+            });
+            return {
+                status: "stop",
+                error: new Error(`Aggregator client error: ${response.status}`),
+            };
+        } catch (error) {
+            // Network error (connection refused, timeout, etc.)
+            logger.warn("Aggregator network error", {
+                url: `${url.origin}${url.pathname}`,
+                error: formatError(error),
+            });
+            return {
+                status: "retry-next",
+                error: new Error("Aggregator network error", { cause: error }),
+            };
         }
-        // All retry attempts failed; throw the last encountered error.
-        throw lastError instanceof Error ? lastError : new Error('Unknown error occurred in fetchWithRetry');
     }
 }
